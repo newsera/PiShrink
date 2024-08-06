@@ -1,6 +1,6 @@
 #!/bin/bash
 
-version="v0.1.4"
+version="v0.1.7"
 
 CURRENT_DIR="$(pwd)"
 SCRIPTNAME="${0##*/}"
@@ -70,13 +70,7 @@ function set_autoexpand() {
     #Make pi expand rootfs on next boot
     mountdir=$(mktemp -d)
     partprobe "$loopback"
-    sleep 3
-    umount "$loopback" > /dev/null 2>&1
-    mount "$loopback" "$mountdir" -o rw
-    if (( $? != 0 )); then
-      info "Unable to mount loopback, autoexpand will not be enabled"
-      return
-    fi
+    mount "$loopback" "$mountdir"
 
     if [ ! -d "$mountdir/etc" ]; then
         info "/etc not found, autoexpand will not be enabled"
@@ -84,11 +78,7 @@ function set_autoexpand() {
         return
     fi
 
-    if [[ ! -f "$mountdir/etc/rc.local" ]]; then
-        info "An existing /etc/rc.local was not found, autoexpand may fail..."
-    fi
-
-    if [[ -f "$mountdir/etc/rc.local" ]] && [[ "$(md5sum "$mountdir/etc/rc.local" | cut -d ' ' -f 1)" != "5c286b336c0606ed8e6f87708f7802eb" ]]; then
+    if [[ -f "$mountdir/etc/rc.local" ]] && [[ "$(md5sum "$mountdir/etc/rc.local" | cut -d ' ' -f 1)" != "1c579c7d5b4292fd948399b6ece39009" ]] || ! [[ -f "$mountdir/etc/rc.local" ]]; then
       echo "Creating new /etc/rc.local"
     if [ -f "$mountdir/etc/rc.local" ]; then
         mv "$mountdir/etc/rc.local" "$mountdir/etc/rc.local.bak"
@@ -128,7 +118,7 @@ cat <<EOF > /etc/rc.local &&
 #!/bin/sh
 echo "Expanding /dev/$ROOT_PART"
 resize2fs /dev/$ROOT_PART
-rm -f /etc/rc.local; cp -fp /etc/rc.local.bak /etc/rc.local && /etc/rc.local
+rm -f /etc/rc.local; cp -fp /etc/rc.local.bak /etc/rc.local 2>/dev/null && /etc/rc.local
 
 EOF
 reboot
@@ -139,7 +129,7 @@ raspi_config_expand() {
 if [[ $? != 0 ]]; then
   return -1
 else
-  rm -f /etc/rc.local; cp -fp /etc/rc.local.bak /etc/rc.local && /etc/rc.local
+  rm -f /etc/rc.local; cp -fp /etc/rc.local.bak /etc/rc.local 2>/dev/null && /etc/rc.local
   reboot
   exit
 fi
@@ -165,7 +155,7 @@ EOF1
 help() {
 	local help
 	read -r -d '' help << EOM
-Usage: $0 [-adhrsvzZ] imagefile.img [newimagefile.img]
+Usage: $0 [-adhrspvzZ] imagefile.img [newimagefile.img]
 
   -s         Don't expand filesystem when image is booted the first time
   -v         Be verbose
@@ -173,6 +163,7 @@ Usage: $0 [-adhrsvzZ] imagefile.img [newimagefile.img]
   -z         Compress image after shrinking with gzip
   -Z         Compress image after shrinking with xz
   -a         Compress image in parallel using multiple cores
+  -p         Remove logs, apt archives, dhcp leases and ssh hostkeys
   -d         Write debug messages in a debug log file
 EOM
 	echo "$help"
@@ -184,13 +175,15 @@ debug=false
 repair=false
 parallel=false
 verbose=false
+prep=false
 ziptool=""
 
-while getopts ":adhrsvzZ" opt; do
+while getopts ":adhprsvzZ" opt; do
   case "${opt}" in
     a) parallel=true;;
     d) debug=true;;
     h) help;;
+    p) prep=true;;
     r) repair=true;;
     s) should_skip_autoexpand=true ;;
     v) verbose=true;;
@@ -318,6 +311,15 @@ elif [ "$should_skip_autoexpand" = false ]; then
 else
   echo "Skipping autoexpanding process..."
 fi
+
+if [[ $prep == true ]]; then
+  info "Syspreping: Removing logs, apt archives, dhcp leases and ssh hostkeys"
+  mountdir=$(mktemp -d)
+  mount "$loopback" "$mountdir"
+  rm -rvf $mountdir/var/cache/apt/archives/* $mountdir/var/lib/dhcpcd5/* $mountdir/var/log/* $mountdir/var/tmp/* $mountdir/tmp/* $mountdir/etc/ssh/*_host_*
+  umount "$mountdir"
+fi
+
 
 #Make sure filesystem is ok
 checkFilesystem
